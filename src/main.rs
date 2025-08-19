@@ -81,23 +81,40 @@ async fn main() {
     Now we know the context window we have to figure out how much of that window our text takes. Thankfully tiktoken has rs bindings so it was a breeze.
     now we have 2 constant bits of info. How much the model can handle, and how much our content is.
     With that we come to our first task, splitting it up.
-    My initial idea was to grab a bunch of different slices one after the other and just send them to get processed at the same time. wait that might still work what.
+    My initial idea was to grab a bunch of different slices one after the other and just send them to get processed at the same time.
+    I never ended up doing that and went with one after the other. Wait that original might still work what.
 
-    Alright gents its been 15 mins and i refactored my code to spawn them to run concurrently. Its now so much faster.
+    EDIT: Alright gents its been 5 mins and I refactored my code to spawn them to run concurrently. Its now around 200ms faster and thats well worth it.
 
+    On that side note, the slicing.
+    We have all the essential parts of the equation with us. Context limit, content size.
+
+    What I did next was just (content size / lmit) and that was number of chunks.
+    I then took each of those chunks and processed them with ai.
+    It worked! But it had a major flaw. If it split mid sentence, it just repaired it. Even when instructed not to its flow was off.
+
+    So then I read more into sliding window and found about the overlap idea.
+    My equation was then shifted to our total chunks being:
+    content size / limit - overlap amount.ceil()
+    (dummy nums) ( 10_000 / (500 - 50) ).ceil(). or 23
+
+    This seemed to work much better and is what I ended up doing.
+
+    So yeah it looks like I have little to 0 overlap on my content. I'm happy with this!
+    I would love some feedback though please let me know.
 
      */
     const CONTEXT_LIMIT: usize = 500;
 
-    const OVERLAP_MARGIN: usize = 50; // 200 token overlap
+    const OVERLAP_MARGIN: usize = 50; // 200 token overlap was too much originally.
 
     const CHUNK_SIZE: usize = CONTEXT_LIMIT - OVERLAP_MARGIN;
 
     let mut file = File::open("bee.txt").unwrap(); // Ideally in prod we have a failsafe
-    let mut contents = String::new(); // Get contents
+    let mut contents = String::new(); // Establish contents
     let _ = file.read_to_string(&mut contents); // Mutate file to be its contents now.
 
-    let tk = o200k_base().unwrap();
+    let tk = o200k_base().unwrap(); // Init tokenizer
 
     // Turn it into tokens
     let tokens = tk.encode_ordinary(&contents);
@@ -111,10 +128,10 @@ async fn main() {
 
     println!("total of {} chunks to go through", total_chunks);
 
-    let mut tweaked_script: String = "".to_string();
 
     println!("Starting to process..");
 
+    // Spawn tasks
     let mut tasks: Vec<tokio::task::JoinHandle<Option<String>>> = Vec::new();
     for i in 0..total_chunks {
         // Clone the client so we can use it in the task.
